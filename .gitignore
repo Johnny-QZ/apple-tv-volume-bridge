@@ -1,0 +1,43 @@
+# Generated builds, caches and IDE metadata
+/build/
+/.build-*/
+__pycache__/
+*.py[cod]
+*.class
+*.dex
+*.apk
+*.apk.idsig
+*.jar
+.DS_Store
+.idea/
+*.iml
+.vscode/
+local.properties
+
+# Signing identities and device authorization material
+*.keystore
+*.jks
+*.pk8
+*.pem
+*.key
+*.p12
+*.pfx
+adbkey
+adbkey.pub
+.android/
+
+# Local device captures and diagnostics
+*.log
+/captures/
+/device-data/
+
+# Optional pairing environment and local credentials/configuration
+/.venv/
+/.private/
+/private/
+*.conf
+*credentials*.json
+*identity*.json
+.env
+.env.*
+*.properties

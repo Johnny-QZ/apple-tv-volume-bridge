@@ -1,0 +1,2 @@
+# Optional computer-side setup only; not needed to build or run the Android app.
+pyatv==0.18.0
