@@ -47,6 +47,7 @@ public class HelperOfflineTest {
   for(int i=0;i<6;i++){FineVolumeWorker.key(25,1);FineVolumeWorker.key(25,0);}check(FineVolumeWorker.queue.size()==4,"bounded queue");
   FineVolumeWorker.queue.clear();FineVolumeWorker.key(24,1);FineVolumeWorker.cancelPending();android.os.SystemClock.now=2000;FineVolumeWorker.key(24,2);check(FineVolumeWorker.queue.isEmpty(),"failed hold blocked until release");FineVolumeWorker.key(24,0);FineVolumeWorker.key(24,1);check(FineVolumeWorker.queue.size()==1,"fresh tap after error");
   FineVolumeWorker.setMode(0);FineVolumeWorker.key(24,1);check(FineVolumeWorker.queue.isEmpty(),"disabled worker");
+  NativeSecurityTest.run();
   System.out.println("PASS native route topology/freshness, OPACK bounds, HAP encryption/partial timeout, fine queue cancellation");
  }
 }

@@ -20,7 +20,7 @@ public final class AirPlayRouteProbe implements Closeable {
   byte[] ltpk=CompanionClient.hex(fields[0]),ltsk=CompanionClient.hex(fields[1]),atvId=CompanionClient.hex(fields[2]),clientId=CompanionClient.hex(fields[3]);
   if(ltpk.length!=32||ltsk.length!=32||atvId.length==0||clientId.length==0)throw new IOException("Credential lengths");
   control=new HapSocket(host,port);uri="rtsp://"+control.socket.getLocalAddress().getHostAddress()+"/12345678";
-  try{
+  try(SocketDeadline deadline=new SocketDeadline(control.socket,15000)){
             X25519PrivateKeyParameters ephemeral=new X25519PrivateKeyParameters(new SecureRandom());
             byte[] publicKey=ephemeral.generatePublicKey().getEncoded();
             Map<Integer,byte[]> reply=CompanionClient.readTlv(control.http("POST","/pair-verify","HTTP/1.1","application/octet-stream",CompanionClient.tlv(6,new byte[]{1},3,publicKey),0));
@@ -46,7 +46,7 @@ public final class AirPlayRouteProbe implements Closeable {
    long seed=new SecureRandom().nextInt()&0xffffffffL;
    setup=setup(Opack.map("streams",Arrays.asList(Opack.map("controlType",2,"channelID",UUID.randomUUID().toString(),"seed",seed,"clientUUID",UUID.randomUUID().toString(),"type",130,"wantsDedicatedSocket",true,"clientTypeUUID","1910A70F-DBC0-4242-AF95-115DB30604E1"))));
    Object streams=setup.get("streams");Object stream=streams instanceof Object[]?((Object[])streams)[0]:((List<?>)streams).get(0);
-   data=new HapSocket(host,((Number)((Map<?,?>)stream).get("dataPort")).intValue());data.enable(shared,"DataStream-Salt"+seed,"DataStream-Output-Encryption-Key","DataStream-Input-Encryption-Key");
+   data=new HapSocket(host,((Number)((Map<?,?>)stream).get("dataPort")).intValue());data.enable(shared,"DataStream-Salt"+seed,"DataStream-Output-Encryption-Key","DataStream-Input-Encryption-Key");deadline.check();
   }catch(Exception e){close();throw e;}
  }
  static byte[] plist(Object v)throws Exception{return BinaryPropertyListWriter.writeToArray(NSObject.fromJavaObject(v));}
@@ -61,7 +61,14 @@ public final class AirPlayRouteProbe implements Closeable {
  void sendPB(byte[] pb)throws Exception{byte[] payload=plist(Opack.map("params",Opack.map("data",CompanionClient.join(var(pb.length),pb))));frame("sync","comm",1,payload);}
  void frame(String type,String command,long seq,byte[] payload)throws Exception{ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream d=new DataOutputStream(bytes);d.writeInt(32+payload.length);byte[] t=new byte[12],c=new byte[4];System.arraycopy(type.getBytes("UTF-8"),0,t,0,type.length());System.arraycopy(command.getBytes("UTF-8"),0,c,0,command.length());d.write(t);d.write(c);d.writeLong(seq);d.writeInt(0);d.write(payload);data.write(bytes.toByteArray());}
  static Object first(Map<Integer,List<Object>> fields,int key){return fields.containsKey(key)?fields.get(key).get(0):null;}
- String ownUid=null;boolean deviceSeen=false;int capability=-1;long routeRevision,routeReceivedNs;List<String> names=new ArrayList<>();
+ String ownUid=null,routeIdentity=null;boolean deviceSeen=false;int capability=-1;long routeRevision,routeReceivedNs;List<String> names=new ArrayList<>();
+ static String outputIdentity(Map<Integer,List<Object>> fields)throws Exception{
+  // Include all advertised identifiers, including uniqueIdentifier (1) and deviceUID (19).
+  // Length prefixes avoid ambiguous concatenations; sorting outputs ignores order-only updates.
+  StringBuilder value=new StringBuilder();
+  for(int field:new int[]{1,2,19,26,35}){Object raw=first(fields,field);String part=raw instanceof byte[]?new String((byte[])raw,"UTF-8"):"";if(field==2)part=AudioRoutePolicy.normalizeName(part);value.append(field).append(':').append(part.length()).append(':').append(part);}
+  return value.toString();
+ }
  void consume(byte[] message)throws Exception{
   Map<Integer,List<Object>> fields=new PB(message).fields();Object info=first(fields,20);
   if(info instanceof byte[]){
@@ -69,19 +76,21 @@ public final class AirPlayRouteProbe implements Closeable {
    if(!(uid instanceof byte[])||((byte[])uid).length==0)uid=first(dev,19);
    String nextUid=uid instanceof byte[]&&((byte[])uid).length>0?new String((byte[])uid,"UTF-8"):null;
    if(!Objects.equals(ownUid,nextUid))capability=-1;
-   ownUid=nextUid;names.clear();boolean ambiguous=false;
+   ownUid=nextUid;names.clear();List<String> identities=new ArrayList<>();boolean ambiguous=false;
    // pyatv's output model includes the host only when it is an audible group leader.
    // Device identity alone is not proof that the host is an active speaker output.
    if(Long.valueOf(1).equals(first(dev,29))&&!Long.valueOf(1).equals(first(dev,24))){
-    Object name=first(dev,2);if(name instanceof byte[])names.add(new String((byte[])name,"UTF-8"));else ambiguous=true;
+    Object name=first(dev,2);if(name instanceof byte[]){names.add(new String((byte[])name,"UTF-8"));identities.add(outputIdentity(dev));}else ambiguous=true;
    }
    if(dev.containsKey(28))for(Object child:dev.get(28)){
     if(!(child instanceof byte[])){ambiguous=true;continue;}
     Map<Integer,List<Object>> childFields=new PB((byte[])child).fields();Object name=first(childFields,2);
-    if(name instanceof byte[])names.add(new String((byte[])name,"UTF-8"));else ambiguous=true;
+    if(name instanceof byte[]){names.add(new String((byte[])name,"UTF-8"));identities.add(outputIdentity(childFields));}else ambiguous=true;
     if(childFields.containsKey(28)||childFields.containsKey(33)||childFields.containsKey(44))ambiguous=true;
    }
    if(dev.containsKey(33)||dev.containsKey(44)||ambiguous)names.clear();
+   Collections.sort(identities);
+   routeIdentity=names.isEmpty()?null:outputIdentity(dev)+identities.toString();
    deviceSeen=true;routeRevision++;routeReceivedNs=System.nanoTime();
   }
   Object changed=first(fields,68);if(changed instanceof byte[]){Map<Integer,List<Object>> update=new PB((byte[])changed).fields();Object uid=first(update,4),nested=first(update,1);if(uid instanceof byte[]&&ownUid!=null&&ownUid.equals(new String((byte[])uid,"UTF-8"))&&nested instanceof byte[]){Object v=first(new PB((byte[])nested).fields(),2);if(v instanceof Number)capability=((Number)v).intValue();}}
@@ -89,15 +98,19 @@ public final class AirPlayRouteProbe implements Closeable {
  }
  void receiveFrame()throws Exception{receiveFrame(data.read());}
  void receiveFrame(int firstByte)throws Exception{
+  try(SocketDeadline deadline=new SocketDeadline(data.socket,4000)){
   byte[] header=CompanionClient.join(new byte[]{(byte)firstByte},data.readBytes(31));DataInputStream h=new DataInputStream(new ByteArrayInputStream(header));int len=h.readInt();if(len<32||len>1048576)throw new IOException("Data frame bound");byte[] type=new byte[12];h.readFully(type);h.readInt();long seq=h.readLong();h.readInt();byte[] body=data.readBytes(len-32);
   if(new String(type,"UTF-8").startsWith("sync"))frame("rply","",seq,new byte[0]);
   if(body.length==0)return;Map<?,?> root=(Map<?,?>)BinaryPropertyListParser.parse(body).toJavaObject();Object params=root.get("params");if(!(params instanceof Map))return;Object raw=((Map<?,?>)params).get("data");if(!(raw instanceof byte[]))return;
   PB stream=new PB((byte[])raw);while(stream.pos<stream.bytes.length){if((stream.bytes[stream.pos]&255)==8){consume(Arrays.copyOfRange(stream.bytes,stream.pos,stream.bytes.length));break;}long n=stream.var();if(n<0||n>stream.bytes.length-stream.pos)throw new IOException("Message length");consume(Arrays.copyOfRange(stream.bytes,stream.pos,stream.pos+(int)n));stream.pos+=(int)n;}
+  deadline.check();}
  }
  void initialize()throws Exception{
+  try(SocketDeadline deadline=new SocketDeadline(data.socket,8000)){
   requestRouteSnapshot();long until=System.nanoTime()+4000000000L;while(!deviceSeen&&System.nanoTime()<until)receiveFrame();
   sendPB(CompanionClient.hex(INIT[1]));sendPB(CompanionClient.hex(INIT[2]));
   until=System.nanoTime()+4000000000L;while(capability<0&&System.nanoTime()<until)receiveFrame();
+  deadline.check();}
  }
  void requestRouteSnapshot()throws Exception{
   Map<Integer,List<Object>> fields=new PB(CompanionClient.hex(INIT[0])).fields();
@@ -112,9 +125,11 @@ public final class AirPlayRouteProbe implements Closeable {
  }
  void feedback()throws Exception{control.http("POST","/feedback","RTSP/1.0","application/octet-stream",new byte[0],sequence++);}
  void startEvents(){final HapSocket channel=event;Thread t=new Thread(new Runnable(){public void run(){try{channel.socket.setSoTimeout(0);while(!channel.socket.isClosed()){
-  String request=channel.line();if(request.length()==0)continue;String cseq="0";int length=0,count=0;
+  int first=channel.read();
+  try(SocketDeadline deadline=new SocketDeadline(channel.socket,5000)){
+  String request=channel.line(first);if(request.length()==0)continue;String cseq="0";int length=0,count=0;
   for(String line;(line=channel.line()).length()>0;){if(++count>100)throw new IOException("Event headers");String low=line.toLowerCase(Locale.ROOT);if(low.startsWith("cseq:"))cseq=line.substring(5).trim();if(low.startsWith("content-length:"))length=Integer.parseInt(line.substring(15).trim());}
-  if(!cseq.matches("[0-9]{1,10}"))throw new IOException("Event sequence");channel.readBytes(length);channel.write(("RTSP/1.0 200 OK\r\nCSeq: "+cseq+"\r\nContent-Length: 0\r\nAudio-Latency: 0\r\n\r\n").getBytes("UTF-8"));
+  if(!cseq.matches("[0-9]{1,10}"))throw new IOException("Event sequence");channel.readBytes(length);channel.write(("RTSP/1.0 200 OK\r\nCSeq: "+cseq+"\r\nContent-Length: 0\r\nAudio-Latency: 0\r\n\r\n").getBytes("UTF-8"));deadline.check();}
  } }catch(Exception ignored){}}},"RouteEvents");t.setDaemon(true);t.start();}
  public void close(){if(data!=null)data.close();if(event!=null)event.close();if(control!=null)control.close();if(secret!=null)Arrays.fill(secret,(byte)0);}
 }

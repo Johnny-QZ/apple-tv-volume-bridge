@@ -11,7 +11,8 @@ public final class BridgeConfig {
     public static final String STOCK_PLAYER_PACKAGE = "com.xiaomi.mitv.tvplayer";
 
     public static final int PORT = 17863;
-    public static final String HELPER_PATH = "/data/local/tmp/cec-bridge-helper-v3.jar";
-    public static final String KEY_PATH = "/data/local/tmp/cec-bridge-v3.key";
-    public static final String LOG_PATH = "/data/local/tmp/cec-bridge-helper-v3.log";
+    public static final String HELPER_PATH = "/data/local/tmp/cec-bridge-helper-v4.jar";
+    public static final String LOG_PATH = "/data/local/tmp/cec-bridge-helper-v4.log";
+    public static final String BOOTSTRAP_PREFIX = "local.cecprobe.bootstrap.v4.";
+    public static final String APP_KEY_FILE = "bridge-v4.key";
 }

@@ -14,7 +14,9 @@ final class BridgeSecrets {
     static synchronized byte[] load(Context context) throws IOException {
         File dir = context.getNoBackupFilesDir();
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cannot create identity directory");
-        AtomicFile file = new AtomicFile(new File(dir, "bridge-v3.key"));
+        // Never reuse v3 material: old ADB bootstrap could disclose that identity.
+        AtomicFile file = new AtomicFile(new File(dir, BridgeConfig.APP_KEY_FILE));
+        new AtomicFile(new File(dir, "bridge-v3.key")).delete();
         if (file.getBaseFile().exists() || new File(file.getBaseFile()+".bak").exists()) {
             byte[] key = file.readFully();
             if (key.length != 32) throw new IOException("Invalid stored bridge identity");

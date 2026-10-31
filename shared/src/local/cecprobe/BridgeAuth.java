@@ -23,7 +23,7 @@ import javax.crypto.spec.SecretKeySpec;
  */
 public final class BridgeAuth {
     public static final int KEY_LENGTH = 32;
-    public static final int PROTOCOL_VERSION = 3;
+    public static final int PROTOCOL_VERSION = 4;
 
     private static final int MAGIC = 0x43454342; // CECB, big endian
     private static final int CLIENT_HELLO = 1;

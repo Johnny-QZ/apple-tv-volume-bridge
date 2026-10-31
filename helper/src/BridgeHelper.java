@@ -1,4 +1,5 @@
 import local.cecprobe.BridgeAuth;
+import local.cecprobe.BridgeBootstrapWire;
 import local.cecprobe.BridgeConfig;
 import local.cecprobe.BridgeWire;
 import android.net.*;
@@ -30,23 +31,31 @@ public class BridgeHelper {
  static final ConfirmHold confirm=new ConfirmHold();
  static int heldScanCode;
  static void repeatConfirm(long now)throws Exception{
+  if(injected.isStopping())return;
   if(confirm.poll(now)){int flags=confirm.repeat==1?128:0;
    KeyEvent e=new KeyEvent(confirm.down,now,0,confirm.key,confirm.repeat,0,-1,heldScanCode,flags,0x101);
    if(!(Boolean)inject.invoke(inputManager,e,0))throw new IOException("Confirm repeat rejected");
   }
  }
- static Map<Integer,Long> injected=new HashMap<Integer,Long>();
- static void releaseInjected(){confirm.clear();for(Map.Entry<Integer,Long> entry:injected.entrySet()){try{inject.invoke(inputManager,new KeyEvent(entry.getValue(),SystemClock.uptimeMillis(),1,entry.getKey(),0,0,-1,0,0,0x101),0);}catch(Exception ignored){}}injected.clear();}
+ static final HeldKeyRelease injected=new HeldKeyRelease();
+ static final HeldKeyRelease.Sender releaseSender=new HeldKeyRelease.Sender(){public void keyUp(int key,long downTime)throws Exception{
+  if(!(Boolean)inject.invoke(inputManager,new KeyEvent(downTime,SystemClock.uptimeMillis(),1,key,0,0,-1,0,0,0x101),0))throw new IOException("Key release rejected");
+ }};
+ static void releaseInjected(){confirm.clear();injected.releaseAll(releaseSender);}
  static void close(FileDescriptor fd){try{if(fd!=null)Os.close(fd);}catch(Exception e){}}
- static byte[] readKey(String path)throws IOException{
-  byte[] key=new byte[32];
-  try(DataInputStream in=new DataInputStream(new FileInputStream(path))){in.readFully(key);if(in.read()!=-1)throw new IOException("Invalid bridge key length");}
-  return key;
+ static byte[] bootstrapKey(String name,int appUid)throws IOException{
+  if(android.os.Process.myUid()!=BridgeBootstrapWire.SHELL_UID||!BridgeBootstrapWire.validName(name)||appUid<10000)
+   throw new IOException("Invalid private bootstrap endpoint");
+  try(LocalSocket socket=new LocalSocket()){
+   socket.connect(new LocalSocketAddress(name,LocalSocketAddress.Namespace.ABSTRACT),5000);
+   socket.setSoTimeout(5000);
+   return BridgeBootstrapWire.receive(socket.getInputStream(),socket.getOutputStream(),socket.getPeerCredentials().getUid(),appUid);
+  }
  }
  public static void main(String[] args)throws Exception{
-  if(args.length!=1||!BridgeConfig.KEY_PATH.equals(args[0]))throw new IOException("Expected the private bridge key file");
+  if(args.length!=3||!"--bootstrap".equals(args[0]))throw new IOException("Expected a private local bootstrap endpoint");
   if(android.os.Process.is64Bit())throw new IOException("This Alpha supports 32-bit input_event only");
-  final byte[] bridgeKey=readKey(args[0]);
+  final byte[] bridgeKey=bootstrapKey(args[1],Integer.parseInt(args[2]));
   LocalServerSocket lock;
   try{lock=new LocalServerSocket("local.cecprobe.helperlock");}catch(Exception e){System.out.println("HELPER_ALREADY_RUNNING");return;}
   final long end=Long.MAX_VALUE;
@@ -57,7 +66,7 @@ public class BridgeHelper {
   AudioRouteWatcher.start();
   Class<?> im=Class.forName("android.hardware.input.InputManager");inputManager=im.getMethod("getInstance").invoke(null);inject=im.getMethod("injectInputEvent",InputEvent.class,int.class);
   Class<?> ref=Class.forName("android.system.Int32Ref");grabValue=ref.getConstructor(int.class).newInstance(1);ioctl=Class.forName("android.system.Os").getMethod("ioctlInt",FileDescriptor.class,int.class,ref);
-  new Thread(new Runnable(){public void run(){while(true){try{Thread.sleep(250);}catch(Exception e){}long now=SystemClock.uptimeMillis();if(now>end||(grabbed&&now-progress>3500)){System.out.println("WATCHDOG_EXIT_RELEASE");System.exit(0);}}}},"ReleaseWatchdog").start();
+  new Thread(new Runnable(){public void run(){while(true){try{Thread.sleep(250);}catch(Exception e){}long now=SystemClock.uptimeMillis();if(now>end||(grabbed&&now-progress>3500)){System.out.println("WATCHDOG_EXIT_RELEASE");try{injected.releaseBeforeExit(releaseSender,250);}finally{System.exit(0);}}}}},"ReleaseWatchdog").start();
   String lastError="";
   while(SystemClock.uptimeMillis()<end){
    FileDescriptor fd=null;Socket socket=new Socket();
@@ -105,7 +114,9 @@ public class BridgeHelper {
      if(volumeOwner==1){FineVolumeWorker.key(key,val);}
      else if(volumeOwner==2){writer.println("KEY "+key+" "+action+" "+repeat);if(!"OK".equals(BridgeWire.readLine(reader)))throw new IOException("Volume delivery unavailable");System.out.println("CEC_VOLUME "+key+" "+action+" "+repeat);}
      else{if(key==26&&val==1){PowerWatcher.captureBeforeSleep();progress=SystemClock.uptimeMillis();}
-      KeyEvent k=new KeyEvent(down,now,action,key,repeat,0,-1,code,0,0x101);boolean ok=(Boolean)inject.invoke(inputManager,k,0);if(!ok)throw new IOException("Key injection rejected");if(action==0)injected.put(key,down);else injected.remove(key);}
+      if(action==0){if(!injected.trackDown(key,down))continue;}
+      else{HeldKeyRelease.Key held=injected.claimUp(key);if(held==null)continue;down=held.downTime;}
+      KeyEvent k=new KeyEvent(down,now,action,key,repeat,0,-1,code,0,0x101);boolean ok=(Boolean)inject.invoke(inputManager,k,0);if(!ok)throw new IOException("Key injection rejected");}
      if(val==0){downs.remove(code);repeats.remove(code);volumeOwners.remove(key);}
     }
    }catch(Throwable e){String kind=e.getClass().getName();if(!kind.equals(lastError)){System.out.println("RELEASE: "+e.toString());lastError=kind;}}

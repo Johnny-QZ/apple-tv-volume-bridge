@@ -7,7 +7,7 @@ verified with SHA-256, and excluded from Git.
 
 | Component | Version / coordinate | Use | License |
 | --- | --- | --- | --- |
-| Bouncy Castle | `org.bouncycastle:bcprov-jdk18on:1.80` | Ed25519, X25519, HKDF and ChaCha20-Poly1305 for Apple TV sessions | Bouncy Castle license (MIT-style), reproduced below |
+| Bouncy Castle | `org.bouncycastle:bcprov-jdk18on:1.86` | Ed25519, X25519, HKDF and ChaCha20-Poly1305 for Apple TV sessions | Bouncy Castle license (MIT-style), reproduced below |
 | dd-plist | `com.googlecode.plist:dd-plist:1.28` | Binary property-list encoding/decoding | MIT, reproduced below |
 | pyatv | `0.18.0` | Optional computer-side user pairing; not bundled in the APK | MIT, reproduced below |
 
@@ -16,7 +16,7 @@ removes multi-release classes, signatures, module metadata and non-class resourc
 before R8 trims unreachable code. This derived input is not an upstream Bouncy
 Castle Android distribution. No upstream binary is committed.
 
-Sources: [Bouncy Castle 1.80 license](https://github.com/bcgit/bc-java/blob/r1rv80/LICENSE.html),
+Sources: [Bouncy Castle 1.86 license](https://github.com/bcgit/bc-java/blob/r1rv86/LICENSE.html),
 [dd-plist license](https://github.com/3breadt/dd-plist/blob/master/LICENSE.txt),
 [dd-plist 1.28 Maven metadata](https://repo.maven.apache.org/maven2/com/googlecode/plist/dd-plist/1.28/dd-plist-1.28.pom),
 [pyatv 0.18.0](https://github.com/postlund/pyatv/tree/v0.18.0).
@@ -24,9 +24,9 @@ The `1.28` POM embedded in the verified dd-plist JAR also declares MIT.
 Android SDK/JDK build tools and pyatv's separately installed dependencies retain
 their own licenses and are not redistributed in this source repository.
 
-## Bouncy Castle 1.80
+## Bouncy Castle 1.86
 
-Copyright (c) 2000-2023 The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org)
+Copyright (c) 2000-2026 The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software
 and associated documentation files (the "Software"), to deal in the Software without restriction,

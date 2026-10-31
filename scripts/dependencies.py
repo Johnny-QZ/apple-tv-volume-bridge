@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CACHE = ROOT / "build/deps"
 MAVEN = "https://repo.maven.apache.org/maven2/"
 DEPENDENCIES = (
-    ("org/bouncycastle/bcprov-jdk18on/1.80/bcprov-jdk18on-1.80.jar",
-     "e8ad209f8c58d291a37ca9750e9e9fac60596956c983e49dd8282381dd8b3249"),
+    ("org/bouncycastle/bcprov-jdk18on/1.86/bcprov-jdk18on-1.86.jar",
+     "2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f"),
     ("com/googlecode/plist/dd-plist/1.28/dd-plist-1.28.jar",
      "88ed8e730f7386297485176c4387146c6914a38c0e58fc296e8a01cdc3b621e1"),
 )
@@ -87,7 +87,7 @@ def prepare(cache=DEFAULT_CACHE, download=False):
     with tempfile.NamedTemporaryFile(dir=cache, suffix=".jar", delete=False) as stream:
         temporary = Path(stream.name)
     try:
-        repack_bouncy_castle(cache / "bcprov-jdk18on-1.80.jar", temporary)
+        repack_bouncy_castle(cache / "bcprov-jdk18on-1.86.jar", temporary)
         os.replace(temporary, derived)
     finally:
         temporary.unlink(missing_ok=True)

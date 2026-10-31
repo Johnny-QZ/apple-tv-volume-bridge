@@ -5,6 +5,7 @@ import java.util.*;
 /** Bounded OPACK subset for Companion. Protocol reference: pyatv (MIT). */
 public final class Opack {
     static final int MAX = 1024 * 1024;
+    static final int MAX_NODES = 8192, MAX_REFS = 4096;
     public static Map<String,Object> map(Object... pairs) {
         Map<String,Object> out = new LinkedHashMap<>();
         for (int i=0;i<pairs.length;i+=2) out.put((String)pairs[i],pairs[i+1]);
@@ -49,14 +50,21 @@ public final class Opack {
         Decoder d=new Decoder(bytes);Object out=d.read(0);
         if(d.pos!=bytes.length)throw new IOException("OPACK trailing bytes");return out;
     }
+    static final class BytesKey {
+        final byte[] value;final int hash;
+        BytesKey(byte[] bytes){value=bytes;hash=Arrays.hashCode(bytes);}
+        public int hashCode(){return hash;}
+        public boolean equals(Object other){return other instanceof BytesKey&&Arrays.equals(value,((BytesKey)other).value);}
+    }
     static final class Decoder {
-        final byte[] data;int pos;final List<Object> refs=new ArrayList<>();
+        final byte[] data;int pos,nodes;final List<Object> refs=new ArrayList<>();
+        final Set<Object> seen=new HashSet<>();
         Decoder(byte[] data){this.data=data;}
         int take() throws IOException {if(pos>=data.length)throw new EOFException();return data[pos++]&255;}
         long number(int n)throws IOException{long x=0;for(int i=0;i<n;i++)x|=(long)take()<<(8*i);return x;}
         byte[] bytes(long n)throws IOException{if(n<0||n>data.length-pos)throw new EOFException();byte[] b=Arrays.copyOfRange(data,pos,pos+(int)n);pos+=(int)n;return b;}
         Object read(int depth)throws IOException{
-            if(depth>32)throw new IOException("OPACK depth");int t=take();Object v;
+            if(depth>32)throw new IOException("OPACK depth");if(++nodes>MAX_NODES)throw new IOException("OPACK node bound");int t=take();Object v;
             if(t==1)return true;if(t==2)return false;if(t==4)return null;
             if(t>=8&&t<=0x2f)return (long)t-8;
             if(t>=0xa0&&t<=0xc4){long idx=t<=0xc0?t-0xa0:number(t-0xc0);if(idx>=refs.size()||idx<0)throw new IOException("OPACK reference");return refs.get((int)idx);}
@@ -75,8 +83,8 @@ public final class Opack {
             else if(t>=0x40&&t<=0x64)v=new String(bytes(t<=0x60?t-0x40:number(t-0x60)),StandardCharsets.UTF_8);
             else if(t>=0x70&&t<=0x94)v=bytes(t<=0x90?t-0x70:number(1<<(t-0x91)));
             else throw new IOException("OPACK tag");
-            boolean found=false;for(Object old:refs)if(old instanceof byte[]&&v instanceof byte[]?Arrays.equals((byte[])old,(byte[])v):Objects.equals(old,v)){found=true;break;}
-            if(!found)refs.add(v);return v;
+            Object identity=v instanceof byte[]?new BytesKey((byte[])v):v;
+            if(seen.add(identity)){if(refs.size()>=MAX_REFS)throw new IOException("OPACK reference bound");refs.add(v);}return v;
         }
     }
 }

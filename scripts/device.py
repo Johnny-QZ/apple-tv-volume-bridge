@@ -10,11 +10,11 @@ from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "local.cecprobe"
-KEY_PATH = "/data/local/tmp/cec-bridge-v3.key"
+LEGACY_KEY_PATH = "/data/local/tmp/cec-bridge-v3.key"
 
 # Only known complete cmdlines qualify; never kill every app_process.
-STOP_HELPER = """for task_pid in $(pidof app_process app_process32 app_process64 BridgeHelper); do
-  task_cmd=$(tr '\\000' '\\n' < /proc/$task_pid/cmdline 2>/dev/null) || continue
+STOP_HELPER = r"""for task_pid in $(pidof app_process app_process32 app_process64 BridgeHelper); do
+  task_cmd=$(tr '\000' '\n' < /proc/$task_pid/cmdline 2>/dev/null) || continue
   case "$task_cmd" in
     'BridgeHelper'|'app_process
 /system/bin
@@ -25,8 +25,37 @@ BridgeHelper
 /data/local/tmp/cec-bridge-v3.key'|'app_process
 /system/bin
 BridgeHelper
-/data/local/tmp/cec-bridge-v3.key') kill "$task_pid" 2>/dev/null ;;
+/data/local/tmp/cec-bridge-v3.key') kill "$task_pid" 2>/dev/null; continue ;;
   esac
+  task_args=
+  for task_prefix in 'app_process
+/system/bin
+BridgeHelper
+--bootstrap
+' 'app_process32
+/system/bin
+BridgeHelper
+--bootstrap
+' 'app_process64
+/system/bin
+BridgeHelper
+--bootstrap
+' 'BridgeHelper
+--bootstrap
+'; do
+    case "$task_cmd" in "$task_prefix"*) task_args=${task_cmd#"$task_prefix"}; break ;; esac
+  done
+  [ -n "$task_args" ] || continue
+  task_newline='
+'
+  task_name=${task_args%%"$task_newline"*}
+  task_uid=${task_args#*"$task_newline"}
+  case "$task_name" in local.cecprobe.bootstrap.v4.*) task_suffix=${task_name#local.cecprobe.bootstrap.v4.} ;; *) continue ;; esac
+  [ "${#task_suffix}" = 32 ] || continue
+  case "$task_suffix" in *[!0-9a-f]*) continue ;; esac
+  case "$task_uid" in ''|*[!0-9]*) continue ;; esac
+  [ "$task_uid" -ge 10000 ] 2>/dev/null || continue
+  kill "$task_pid" 2>/dev/null
 done
 sleep 1
 if [ -f /data/local/tmp/cec-bridge-v3-power-restore ]; then
@@ -85,8 +114,8 @@ def main():
         run(target + ["shell", STOP_HELPER])
         if args.action == "uninstall":
             run(target + ["uninstall", PACKAGE])
-            files = [KEY_PATH, KEY_PATH + ".tmp"]
-            for version in (2, 3):
+            files = [LEGACY_KEY_PATH, LEGACY_KEY_PATH + ".tmp"]
+            for version in (2, 3, 4):
                 files += ["/data/local/tmp/cec-bridge-helper-v%d.%s" % (version, ext)
                           for ext in ("jar", "jar.tmp", "log")]
             run(target + ["shell", "rm", "-f"] + files)

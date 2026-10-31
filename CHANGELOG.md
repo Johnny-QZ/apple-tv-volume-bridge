@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0-alpha.4 — security and failure-path fixes
+
+- Stop sending the bridge HMAC key over ADB. Bootstrap through a random Android Unix socket with OS-reported shell/app peer-UID checks, rotate to a fresh v4 key/protocol, and remove the shell key file.
+- Before a stalled helper exits, atomically claim held injected keys and attempt their UP events within a 250 ms window. A blocked injector cannot indefinitely delay exit; cleanup remains best effort.
+- Invalidate queued fine-volume work and in-flight read baselines when output identity changes or becomes unknown/expired; recheck before each absolute write. The remote protocol does not offer an atomic route-check-and-write operation.
+- Bound whole network operations with monotonic socket-close deadlines and tighten pairing/TLV/OPACK parsing limits.
+- Upgrade Bouncy Castle to SHA-256-pinned 1.86 and pin optional pairing dependency srptools to 1.0.1 for compatibility with pyatv 0.18.0.
+
+Offline validation only. The public alpha has not been installed on the TV; the original private 0.2.11 hardware observations are unchanged. The alpha.3 tag remains historical.
+
 ## 0.3.0-alpha.3 — latest prototype merged for source release
 
 - Merge the private prototype through `0.2.11` while preserving per-install mutual HMAC authentication.

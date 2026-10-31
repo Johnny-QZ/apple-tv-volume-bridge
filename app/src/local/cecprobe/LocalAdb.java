@@ -33,36 +33,75 @@ public final class LocalAdb {
   try(Connection c=new Connection(key,status)){
    push(c,BridgeConfig.HELPER_PATH+".tmp",jar);
   }
-  // Separate transports avoid a pending CLSE acknowledgement from the first
-  // sync channel being mistaken for the next channel's OPEN response.
-  try(Connection c=new Connection(key,status)){
-   push(c,BridgeConfig.KEY_PATH+".tmp",bridgeKey);
-  }
-  // SYNC creates both temporary files with mode 0600. Explicitly set permissions
-  // before an atomic rename; the secret is never put in shell argv or logs.
-  String commit="chmod 600 "+BridgeConfig.KEY_PATH+".tmp "+BridgeConfig.HELPER_PATH+".tmp"
-   +" && mv -f "+BridgeConfig.KEY_PATH+".tmp "+BridgeConfig.KEY_PATH
+  // Only the public helper is copied over ADB. Classic ADB does not authenticate
+  // its daemon, so a bridge identity must never enter this transport.
+  String commit="chmod 600 "+BridgeConfig.HELPER_PATH+".tmp"
    +" && mv -f "+BridgeConfig.HELPER_PATH+".tmp "+BridgeConfig.HELPER_PATH
    +" && echo CEC_BRIDGE_FILES_READY";
   try(Connection c=new Connection(key,status)){
    if(!runShell(c,commit).contains("CEC_BRIDGE_FILES_READY"))throw new IOException("辅助程序文件安装失败");
   }
   status(status,"正在启动音量辅助程序…");
-  // Validate the complete argv before stopping our v3 helper or the v0.2 prototype.
-  String command="for task_pid in $(pidof app_process app_process32 app_process64 BridgeHelper); do task_proc=/proc/$task_pid; "
-   +"task_cmd=$(tr '\\000' '\\n' < \"$task_proc/cmdline\" 2>/dev/null) || continue; "
-   +"case \"$task_cmd\" in "
-   +"'app_process\n/system/bin\nBridgeHelper'|'app_process\n/system/bin\nBridgeHelper\n180'|'BridgeHelper'|"
-   +"'app_process\n/system/bin\nBridgeHelper\n"+BridgeConfig.KEY_PATH+"'|'BridgeHelper\n"+BridgeConfig.KEY_PATH+"') "
-   +"kill \"${task_proc##*/}\" 2>/dev/null ;; esac; done; "
-   +"sleep 1; umask 077; CLASSPATH="+BridgeConfig.HELPER_PATH+" nohup app_process /system/bin BridgeHelper "+BridgeConfig.KEY_PATH
-   +" > "+BridgeConfig.LOG_PATH+" 2>&1 < /dev/null & sleep 1; "
-   +"echo CEC_BRIDGE_START_REQUESTED";
-  String result;
-  try(Connection c=new Connection(key,status)){result=runShell(c,command);}
-  if(!result.contains("CEC_BRIDGE_START_REQUESTED"))throw new IOException("未收到辅助程序启动确认");
-  status(status,"辅助程序已启动，正在确认连接…");return result;
+  try(BridgeBootstrap bootstrap=new BridgeBootstrap(bridgeKey)){
+   String command=stopKnownHelpers()
+    +"sleep 1; rm -f /data/local/tmp/cec-bridge-v3.key /data/local/tmp/cec-bridge-v3.key.tmp; "
+    +"umask 077; CLASSPATH="+BridgeConfig.HELPER_PATH+" nohup app_process /system/bin BridgeHelper --bootstrap "
+    +bootstrap.name()+" "+android.os.Process.myUid()
+    +" > "+BridgeConfig.LOG_PATH+" 2>&1 < /dev/null & sleep 1; echo CEC_BRIDGE_START_REQUESTED";
+   String result;
+   try(Connection c=new Connection(key,status)){result=runShell(c,command);}
+   if(!result.contains("CEC_BRIDGE_START_REQUESTED"))throw new IOException("未收到辅助程序启动确认");
+   bootstrap.awaitDelivery(); // A forged ADB reply cannot complete this UID-checked exchange.
+   status(status,"辅助程序已启动，正在确认连接…");return result;
+  }
  }
+ private static String stopKnownHelpers(){
+  return "for task_pid in $(pidof app_process app_process32 app_process64 BridgeHelper); do\n"
+   +"  task_cmd=$(tr '\\000' '\\n' < /proc/$task_pid/cmdline 2>/dev/null) || continue\n"
+   +"  case \"$task_cmd\" in\n"
+   +"    'BridgeHelper'|'app_process\n"
+   +"/system/bin\n"
+   +"BridgeHelper'|'app_process\n"
+   +"/system/bin\n"
+   +"BridgeHelper\n"
+   +"180'|'BridgeHelper\n"
+   +"/data/local/tmp/cec-bridge-v3.key'|'app_process\n"
+   +"/system/bin\n"
+   +"BridgeHelper\n"
+   +"/data/local/tmp/cec-bridge-v3.key') kill \"$task_pid\" 2>/dev/null; continue ;;\n"
+   +"  esac\n"
+   +"  task_args=\n"
+   +"  for task_prefix in 'app_process\n"
+   +"/system/bin\n"
+   +"BridgeHelper\n"
+   +"--bootstrap\n"
+   +"' 'app_process32\n"
+   +"/system/bin\n"
+   +"BridgeHelper\n"
+   +"--bootstrap\n"
+   +"' 'app_process64\n"
+   +"/system/bin\n"
+   +"BridgeHelper\n"
+   +"--bootstrap\n"
+   +"' 'BridgeHelper\n"
+   +"--bootstrap\n"
+   +"'; do\n"
+   +"    case \"$task_cmd\" in \"$task_prefix\"*) task_args=${task_cmd#\"$task_prefix\"}; break ;; esac\n"
+   +"  done\n"
+   +"  [ -n \"$task_args\" ] || continue\n"
+   +"  task_newline='\n"
+   +"'\n"
+   +"  task_name=${task_args%%\"$task_newline\"*}\n"
+   +"  task_uid=${task_args#*\"$task_newline\"}\n"
+   +"  case \"$task_name\" in local.cecprobe.bootstrap.v4.*) task_suffix=${task_name#local.cecprobe.bootstrap.v4.} ;; *) continue ;; esac\n"
+   +"  [ \"${#task_suffix}\" = 32 ] || continue\n"
+   +"  case \"$task_suffix\" in *[!0-9a-f]*) continue ;; esac\n"
+   +"  case \"$task_uid\" in ''|*[!0-9]*) continue ;; esac\n"
+   +"  [ \"$task_uid\" -ge 10000 ] 2>/dev/null || continue\n"
+   +"  kill \"$task_pid\" 2>/dev/null\n"
+   +"done\n";
+ }
+
  private static void push(Connection c,String remote,byte[] data)throws Exception{
   c.deadline(15000);Channel ch=c.open("sync:");
   try{

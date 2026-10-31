@@ -10,12 +10,12 @@ import org.bouncycastle.crypto.params.*;
 import org.bouncycastle.crypto.signers.Ed25519Signer;
 
 /** Paired, volume-only Companion transport. No discovery, pairing or power commands. */
-public final class CompanionClient implements Closeable {
+public final class CompanionClient implements VolumeTransport {
     final Socket socket=new Socket();
     DataInputStream in;OutputStream out;
     byte[] encryptKey,decryptKey;long sent,received;long xid=100;
     public CompanionClient(String host,int port,String credentials)throws Exception {
-        try {
+        try (SocketDeadline deadline=new SocketDeadline(socket,12000)) {
             String[] fields=credentials.trim().split(":");if(fields.length!=4)throw new IOException("Credential format");
             byte[] ltpk=hex(fields[0]),ltsk=hex(fields[1]),atvId=hex(fields[2]),clientId=hex(fields[3]);
             if(ltpk.length!=32||ltsk.length!=32||atvId.length==0||clientId.length==0)throw new IOException("Credential lengths");
@@ -47,6 +47,7 @@ public final class CompanionClient implements Closeable {
                 "_pubID","02:00:00:00:00:01","_sf",256,"_sv","170.18","model","iPhone","name","TV Volume Bridge"));
             command("_sessionStart",Opack.map("_srvT","com.apple.tvremoteservices","_sid",new SecureRandom().nextInt()&0xffffffffL));
             command("TVRCSessionStart",Opack.map("ProtocolVersionKey","1.2"));
+            deadline.check();
         } catch(Exception e){close();throw e;}
     }
     public synchronized double getVolume()throws Exception {
@@ -63,17 +64,17 @@ public final class CompanionClient implements Closeable {
     }
     @SuppressWarnings("unchecked")
     Map<String,Object> command(String name,Map<String,Object> content)throws Exception {
+        try(SocketDeadline deadline=new SocketDeadline(socket,4000)){
         long id=++xid;send(8,Opack.map("_i",name,"_t",2,"_x",id,"_c",content));
-        long deadline=System.nanoTime()+4000000000L;
         for(int n=0;n<128;n++){
-            long remaining=(deadline-System.nanoTime())/1000000;
-            if(remaining<=0)throw new SocketTimeoutException();socket.setSoTimeout((int)remaining);
+            socket.setSoTimeout(deadline.remainingMillis());
             Map<String,Object> reply=receive(8);
             if(reply.get("_x") instanceof Number && ((Number)reply.get("_x")).longValue()==id && Objects.equals(reply.get("_t"),3L)){
                 if(reply.containsKey("_em"))throw new IOException("Companion rejected command");
-                Object c=reply.get("_c");if(!(c instanceof Map))throw new IOException("Missing response content");return (Map<String,Object>)c;
+                Object c=reply.get("_c");if(!(c instanceof Map))throw new IOException("Missing response content");deadline.check();return (Map<String,Object>)c;
             }
         }throw new IOException("Companion event limit");
+        }
     }
     void send(int type,Map<String,Object> payload)throws Exception {
         byte[] body=Opack.pack(payload);int len=body.length+(encryptKey==null?0:16);
@@ -85,7 +86,7 @@ public final class CompanionClient implements Closeable {
     Map<String,Object> receive(int expectedType)throws Exception {
         byte[] header=new byte[4];in.readFully(header);int type=header[0]&255;
         int len=((header[1]&255)<<16)|((header[2]&255)<<8)|(header[3]&255);
-        if(type!=expectedType||len<1||len>Opack.MAX)throw new IOException("Unexpected frame");
+        if(type!=expectedType||len<1||len>(decryptKey==null?PairingTlv.MAX_MESSAGE:Opack.MAX))throw new IOException("Unexpected frame");
         byte[] body=new byte[len];in.readFully(body);
         if(decryptKey!=null)body=crypt(false,decryptKey,counter(received++),header,body);
         Object decoded=Opack.unpack(body);if(!(decoded instanceof Map))throw new IOException("Frame is not dictionary");return (Map<String,Object>)decoded;
@@ -106,7 +107,7 @@ public final class CompanionClient implements Closeable {
         ByteArrayOutputStream out=new ByteArrayOutputStream();for(int i=0;i<pairs.length;i+=2){byte[] b=(byte[])pairs[i+1];for(int p=0;p<b.length;p+=255){int n=Math.min(255,b.length-p);out.write((Integer)pairs[i]);out.write(n);out.write(b,p,n);}}return out.toByteArray();
     }
     static Map<Integer,byte[]> readTlv(byte[] data)throws IOException{
-        Map<Integer,byte[]> m=new HashMap<>();for(int p=0;p<data.length;){if(p+2>data.length)throw new EOFException();int t=data[p++]&255,n=data[p++]&255;if(p+n>data.length)throw new EOFException();byte[] b=Arrays.copyOfRange(data,p,p+n);m.put(t,m.containsKey(t)?join(m.get(t),b):b);p+=n;}return m;
+        return PairingTlv.decode(data);
     }
     static byte[] required(Map<Integer,byte[]> m,int key)throws IOException{byte[] b=m.get(key);if(b==null)throw new IOException("Missing pairing field");return b;}
     static Map<Integer,byte[]> pairing(Map<String,Object> reply)throws IOException{Object pd=reply.get("_pd");if(!(pd instanceof byte[]))throw new IOException("Missing pairing data");Map<Integer,byte[]> m=readTlv((byte[])pd);if(m.containsKey(7))throw new IOException("Pair verify rejected");return m;}
